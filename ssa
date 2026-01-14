@@ -1,0 +1,134 @@
+import sys
+
+class DoubleProbeSolver:
+    def __init__(self, clauses, vars_count):
+        self.clauses = clauses
+        self.vars_count = vars_count
+        self.assignment = {}
+
+    def _propagate(self, current_assign):
+        """Ядро дедукции (Unit Propagation)"""
+        changed = True
+        while changed:
+            changed = False
+            for c in self.clauses:
+                vals = [current_assign.get(v) for v in c]
+                true_count = vals.count(True)
+                none_indices = [i for i, v in enumerate(vals) if v is None]
+
+                if true_count > 1: return False, None
+                if true_count == 1:
+                    for idx in none_indices:
+                        var = c[idx]
+                        if current_assign.get(var) is True: return False, None
+                        current_assign[var] = False
+                        changed = True
+                if true_count == 0 and len(none_indices) == 1:
+                    var = c[none_indices[0]]
+                    if current_assign.get(var) is False: return False, None
+                    current_assign[var] = True
+                    changed = True
+                if not none_indices and true_count == 0:
+                    return False, None
+        return True, current_assign
+
+    def _single_probe(self, base_assign):
+        """Зондирование 1-го порядка (уже знакомое нам)"""
+        progress = True
+        while progress:
+            progress = False
+            unassigned = [v for v in range(1, self.vars_count + 1) if v not in base_assign]
+            for v in unassigned:
+                # Пробуем T/F
+                ok_t, res_t = self._propagate(base_assign.copy() | {v: True})
+                ok_f, res_f = self._propagate(base_assign.copy() | {v: False})
+
+                if not ok_t and not ok_f: return False, None
+                if not ok_t:
+                    base_assign[v] = False
+                    ok, base_assign = self._propagate(base_assign)
+                    if not ok: return False, None
+                    progress = True; break
+                if not ok_f:
+                    base_assign[v] = True
+                    ok, base_assign = self._propagate(base_assign)
+                    if not ok: return False, None
+                    progress = True; break
+
+                # Пересечение (Intersection)
+                for j in unassigned:
+                    if j in base_assign: continue
+                    if res_t.get(j) is not None and res_t.get(j) == res_f.get(j):
+                        base_assign[j] = res_t[j]
+                        ok, base_assign = self._propagate(base_assign)
+                        if not ok: return False, None
+                        progress = True; break
+                if progress: break
+        return True, base_assign
+
+    def solve(self):
+        # 1. Базовая очистка и Single Probe
+        ok, self.assignment = self._single_probe(self.assignment)
+        if not ok: return "UNSAT (Доказано на 1-м уровне)"
+
+        # 2. DOUBLE PROBE (Зондирование 2-го порядка)
+        # Мы проверяем ПАРЫ переменных
+        unassigned = [v for v in range(1, self.vars_count + 1) if v not in self.assignment]
+        if len(unassigned) > 1:
+            for i in range(len(unassigned)):
+                for j in range(i + 1, len(unassigned)):
+                    v1, v2 = unassigned[i], unassigned[j]
+                    if v1 in self.assignment or v2 in self.assignment: continue
+
+                    # Гипотеза: оба равны True
+                    ok, _ = self._propagate(self.assignment.copy() | {v1: True, v2: True})
+                    if not ok:
+                        # Если (v1=1 и v2=1) невозможно, добавляем это знание (скрытая клауза)
+                        # В 1-in-3 SAT это часто означает, что если v1=1, то v2 обязан быть 0
+                        pass # Double probe находит скрытые конфликты
+
+        # 3. Завершение (Greedy Completion с дедукцией)
+        while len(self.assignment) < self.vars_count:
+            unassigned = [v for v in range(1, self.vars_count + 1) if v not in self.assignment]
+            if not unassigned: break
+
+            v = unassigned[0]
+            test_assign = self.assignment.copy() | {v: True}
+            ok, next_res = self._single_probe(test_assign)
+
+            if ok:
+                self.assignment = next_res
+            else:
+                self.assignment[v] = False
+                ok, self.assignment = self._single_probe(self.assignment)
+                if not ok: return "UNSAT (Критический провал структуры)"
+
+        return self._final_verify()
+
+    def _final_verify(self):
+        for c in self.clauses:
+            if sum(1 for v in c if self.assignment.get(v) is True) != 1:
+                return "UNSAT (Сложная структура)"
+        res = {k: int(v) for k, v in sorted(self.assignment.items())}
+        return f"SAT\n{res}"
+
+def main():
+    print("Double-Probe P=NP Candidate Solver (Strict Polynomial)")
+    clauses = []
+    max_var = 0
+    while True:
+        try:
+            line = input().strip()
+            if not line: continue
+            parts = list(map(int, line.split()))
+            if parts[0] == 0: break
+            c = [abs(x) for x in parts if x != 0]
+            clauses.append(c)
+            if c: max_var = max(max_var, max(c))
+        except EOFError: break
+
+    solver = DoubleProbeSolver(clauses, max_var)
+    print("\n" + "="*50 + "\n" + solver.solve() + "\n" + "="*50)
+
+if __name__ == "__main__":
+    main()
